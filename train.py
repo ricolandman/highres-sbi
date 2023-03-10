@@ -34,9 +34,9 @@ from parameter import *
 
 
 scratch = os.environ.get('SCRATCH', '')
-scratch = '/users/ricolandman/Research_data/npe_crires/'
-datapath = Path(scratch) / 'data'
-savepath = Path(scratch) / 'runs'
+# scratch = '/users/ricolandman/Research_data/npe_crires/'
+datapath = Path(scratch) / 'highres-sbi'
+savepath = Path(scratch) / 'highres-sbi/runs'
 
 
 class SoftClip(nn.Module):
@@ -247,7 +247,7 @@ def unit_conversion(flux, distance=4.866*u.pc):
     return flux_dens_emit.value
 
 if __name__ == '__main__':
-    x = np.loadtxt('../data_to_fit.dat')
+    x = np.loadtxt('data_to_fit.dat')
     wl, flux, err, _, trans = x.T
     nans = np.isnan(flux)
     err[nans] = np.interp(wl[nans], wl[~nans], err[~nans])

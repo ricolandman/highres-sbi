@@ -1,0 +1,22 @@
+{
+    "os": "Linux-4.18.0-193.6.3.el8_2.x86_64-x86_64-with-glibc2.28",
+    "python": "3.9.7",
+    "heartbeatAt": "2023-03-10T15:39:02.446002",
+    "startedAt": "2023-03-10T15:39:01.838475",
+    "docker": null,
+    "cpu_count": 32,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "program": "/home/mvasist/highres-sbi/train.py",
+    "codePath": "train.py",
+    "git": {
+        "remote": "https://github.com/ricolandman/highres-sbi.git",
+        "commit": "0fa0185710f6e252373f8ba6e0c9d857b15f90a6"
+    },
+    "email": null,
+    "root": "/home/mvasist/highres-sbi",
+    "host": "master",
+    "username": "mvasist",
+    "executable": "/home/mvasist/miniconda3/envs/HighResear/bin/python"
+}

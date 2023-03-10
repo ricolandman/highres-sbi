@@ -15,7 +15,7 @@ from lampe.data import JointLoader, H5Dataset
 
 #from ees import Simulator, LOWER, UPPER
 from parameter import *
-from spectra_simulator import *
+# from spectra_simulator import *
 
 
 path = Path('./ear/data') 
