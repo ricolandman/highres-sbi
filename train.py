@@ -214,18 +214,18 @@ def train(model_wavelengths, data_wavelengths, data_uncertainty, data_scaling):
         end = time.time()
         estimator.eval()
 
-        with torch.no_grad():
-            losses_val = torch.stack([
-                pipe(theta, x)
-                for theta, x in islice(validset, 256)
-            ]).cpu().numpy()
+        # with torch.no_grad():
+        #     losses_val = torch.stack([
+        #         pipe(theta, x)
+        #         for theta, x in islice(validset, 256)
+        #     ]).cpu().numpy()
 
         run.log({
             'lr': optimizer.param_groups[0]['lr'],
             'loss': np.nanmean(losses),
-            'loss_val': np.nanmean(losses_val),
+            # 'loss_val': np.nanmean(losses_val),
             'nans': np.isnan(losses).mean(),
-            'nans_val': np.isnan(losses_val).mean(),
+            # 'nans_val': np.isnan(losses_val).mean(),
             'speed': len(losses) / (end - start),
         })
 
