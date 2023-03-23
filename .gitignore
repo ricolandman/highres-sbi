@@ -1,3 +1,8 @@
+#wandb and other stuff
+wandb/
+.dwagz/
+joblib/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
