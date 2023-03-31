@@ -32,11 +32,13 @@ from generate import param_set
 from parameter import *
 
 # from ees import Simulator, LOWER, UPPER
-
+from Dataprocuring import Data 
+# from Embedding.SelfAttention import SelfAttention
+# import Embedding.CNN as CNN
 
 scratch = os.environ.get('SCRATCH', '')
 # scratch = '/users/ricolandman/Research_data/npe_crires/'
-datapath = Path(scratch) / 'highres-sbi'
+datapath = Path(scratch) / 'highres-sbi/data_lessthan2e6'
 savepath = Path(scratch) / 'highres-sbi/runs'
 
 
@@ -48,8 +50,69 @@ class SoftClip(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return x / (1 + abs(x / self.bound))
+    
+
+class CNNwithAttention(nn.Module):
+    def __init__(self, n_channels_in=2, n_channels_out=128):
+        super(CNNwithAttention, self).__init__()
+        
+        ## Convolutional layers ##
+        self.layer1 = self.ConvLayer(n_channels_in, 4, ksize_conv=8, strd_conv=4)        
+        self.layer2 = self.ConvLayer(4, 8, ksize_conv=8, strd_conv=4)
+        self.layer3 = self.ConvLayer(8, 16, ksize_conv=8, strd_conv=4)
+        self.layer4 = self.ConvLayer(16, 32, ksize_conv=8, strd_conv=4)
+
+        ## Self Attention layers ##
+        self.mha1 = nn.MultiheadAttention(embed_dim=1535, num_heads=1)
+        self.mha2 = nn.MultiheadAttention(embed_dim=382, num_heads=1)
+        self.mha3 = nn.MultiheadAttention(embed_dim=94, num_heads=1)
+
+        self.avgpool = torch.nn.AvgPool1d(kernel_size=2)
+
+        self.fc = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(1504, 256),
+            nn.ELU(),
+            nn.Dropout(),
+            nn.Linear(256, 128),
+            nn.ELU(),
+            nn.Dropout(),
+            nn.Linear(128, n_channels_out))
+        self.fc = self.fc.to(torch.float32)
+        
+    def ConvLayer(self, nb_neurons_in, nb_neurons_out, ksize_conv=3, strd_conv=1, pad_conv=0, ksize_pool=3, strd_pool=1, pad_pool=0):
+        '''
+        Define a convolutional layer
+        '''
+        return nn.Conv1d(nb_neurons_in, nb_neurons_out, 
+                    kernel_size=ksize_conv, stride=strd_conv, padding=pad_conv)
 
 
+    def forward(self, x): #[BS, 2, 4341]
+        x = x.to(torch.float32)
+        x = self.layer1(x) 
+        y = x.clone()  #[B, 4, 1535] [B,C,HW]
+        y, _ = self.mha1(y,y,y)
+        x = x + y
+
+        x = self.layer2(x) 
+        y = x.clone()  # [B, 8, 382] [B,C,HW]
+        y, _ = self.mha2(y,y,y)
+        x = x + y
+
+        x = self.layer3(x) 
+        y = x.clone()  # [B, 16, 94] [B,C,HW]
+        y, _ = self.mha3(y,y,y)
+        x = x + y
+
+        # x = self.avgpool(x)   # [B, 8, 47] [B,C,HW]
+        x = torch.flatten(x, start_dim = 1)
+        x = self.fc(x)
+        x = x.to(torch.double)
+
+        return x
+            
+    
 class CNN(nn.Module):
     def __init__(self, n_channels_in=2, n_channels_out=128):
         super(CNN, self).__init__()
@@ -87,20 +150,25 @@ class CNN(nn.Module):
     def forward(self, x):
         x = x.to(torch.float32)
         out = self.layer1(x)
+        print(out.size())
         out = self.layer2(out)
+        print(out.size())
         out = self.layer3(out)
+        print(out.size())
         #print(out.dtype)
         out = out.view(out.size(0), -1)#.to(torch.float32)  # Flatten for fully connected layers
         out = self.fc(out)
+        print(out.size())
         out = out.to(torch.double)
         
         return out
+
 
 class NPEWithEmbedding(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.embedding = CNN(2, 128)
+        self.embedding = CNNwithAttention(2, 128)
         self.npe = NPE(
             19, 128,
             #moments=((l + u) / 2, (u - l) / 2),
@@ -112,7 +180,7 @@ class NPEWithEmbedding(nn.Module):
 
     def forward(self, theta: Tensor, x: Tensor) -> Tensor:
         y = self.embedding(x)
-        if np.any(np.isnan(y.detach().cpu().numpy())):
+        if torch.isnan(y).sum()>0:
              print('NaNs in embedding')
         return self.npe(theta.to(torch.double), y)
 
@@ -138,51 +206,14 @@ class BNPELoss(nn.Module):
         l0 = -log_p.mean()
         lb = (torch.sigmoid(log_p - self.prior.log_prob(theta)) + torch.sigmoid(log_p_prime - self.prior.log_prob(theta_prime)) - 1).mean().square()
         return l0 + self.lmbda * lb
-
     
 
-class Data():
-    def __init__(self, path= 'data_to_fit.dat'):
-        self.path = Path(path)
-        self.data = np.loadtxt(self.path)
-        self.wl, f, er, _, trans = self.data.T
-        self.flux, self.err = self.FluxandError_processing(f, er)
-        self.model_wavelengths = self.get_modelW()
-        self.data_wavelengths = self.wl/1000
-        self.data_wavelengths_norm = self.norm_data_wavelengths()
-                
-    def unit_conversion(self, flux, distance=4.866*u.pc):
-        flux_units = flux * u.erg/u.s/u.cm**2/u.nm
-        flux_dens_emit = (flux_units * distance**2/const.R_jup**2).to(u.W/u.m**2/u.micron)
-        return flux_dens_emit.value
         
-    def FluxandError_processing(self, flux, err):
-        nans = np.isnan(flux)
-        flux[nans] = np.interp(self.wl[nans], self.wl[~nans], flux[~nans])
-        flux = self.unit_conversion(flux)
-        flux_scaling = 1./np.nanmean(flux)
-        
-        err[nans] = np.interp(self.wl[nans], self.wl[~nans], err[~nans])
-        err = self.unit_conversion(err)
-                
-        return flux_scaling, err 
-        
-    def get_modelW(self):
-        sim_res = 2e5
-        dlam = 2.350/sim_res
-        return np.arange(2.320, 2.371, dlam)
-        
-    def norm_data_wavelengths(self):
-        return (self.data_wavelengths - np.nanmean(self.data_wavelengths))/\
-                    (np.nanmax(self.data_wavelengths)-np.nanmin(self.data_wavelengths))
-        
-#     def main(self):
-
 class Processing():
     d = Data()
     data_wavelengths = d.data_wavelengths
     model_wavelengths = d.model_wavelengths
-    flux_scaling = d.flux
+    flux_scaling = d.flux_scaling
     data_wavelengths_norm = d.data_wavelengths_norm
     
     def __call__(self, theta, x):
@@ -240,13 +271,14 @@ class Processing():
                 
                     
 def noisy(data) -> np.ndarray:
-    data_uncertainty = Data().err
+    data_uncertainty = Data().err * Data().flux_scaling
     theta, x = data
     x[:,0] = x[:,0] + data_uncertainty * np.random.randn(*x[:,0].shape)
     return theta, x
    
 
-def train(): 
+@job(array=1, cpus=2, gpus=1, ram='32GB', time='10-00:00:00')
+def train(i: int):
 
     config_dict = {
         
@@ -263,24 +295,24 @@ def train():
                 'patience': 32,
                 'epochs': 1024,
                 'stop_criterion': 'early', 
-                'batch_size': 2048,
+                'batch_size': 32,
                 'gradient_steps_train': 1024, 
                 'gradient_steps_valid': 256
              } 
 
     # Run
-#     run = wandb.init(project='highres-ear')
+    run = wandb.init(project='highres-ear_lessthan2e6')
 
     # Data
-    trainset = H5Dataset(datapath / 'train.h5', batch_size=128, shuffle=True)
-    validset = H5Dataset(datapath / 'valid.h5', batch_size=128, shuffle=True)
+    trainset = H5Dataset(datapath / 'train.h5', batch_size=32, shuffle=True)
+    validset = H5Dataset(datapath / 'valid.h5', batch_size=32, shuffle=True)
 
     # Training
     process = Processing()
     estimator = NPEWithEmbedding().cuda()
     prior = BoxUniform(torch.tensor(param_set.lower).cuda(), torch.tensor(param_set.upper).cuda())
     loss = NPELoss(estimator)
-    optimizer = optim.AdamW(estimator.parameters(), lr=1e-4, weight_decay=1e-2)
+    optimizer = optim.AdamW(estimator.parameters(), lr=1e-3, weight_decay=1e-2)
     step = GDStep(optimizer, clip=1.0)
     scheduler = sched.ReduceLROnPlateau(
         optimizer,
@@ -315,14 +347,14 @@ def train():
                 for theta, x in islice(validset, 256)
             ]).cpu().numpy()
 
-#         run.log({
-#             'lr': optimizer.param_groups[0]['lr'],
-#             'loss': np.nanmean(losses),
-#             'loss_val': np.nanmean(losses_val),
-#             'nans': np.isnan(losses).mean(),
-#             'nans_val': np.isnan(losses_val).mean(),
-#             'speed': len(losses) / (end - start),
-#         })
+        run.log({
+            'lr': optimizer.param_groups[0]['lr'],
+            'loss': np.nanmean(losses),
+            'loss_val': np.nanmean(losses_val),
+            'nans': np.isnan(losses).mean(),
+            'nans_val': np.isnan(losses_val).mean(),
+            'speed': len(losses) / (end - start),
+        })
 
         scheduler.step(np.nanmean(losses_val))
 
@@ -338,7 +370,19 @@ def train():
             'optimizer': optimizer.state_dict(),
         },  runpath / f'states_{epoch}.pth')
 
-#     run.finish()
+    run.finish()
 
 
-train()
+# train()
+
+if __name__ == '__main__':
+    schedule(
+        train, #coverageplot, cornerplot,
+        name='Training',
+        backend='slurm',
+        env=[
+            'source ~/.bashrc',
+            'conda activate HighResear',
+            'export WANDB_SILENT=true',
+        ]
+    )
